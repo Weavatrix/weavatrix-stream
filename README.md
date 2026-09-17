@@ -2,9 +2,11 @@
 
 Bounded streaming aggregates for typed `source → target` interactions.
 
-This is a `no_std` + `alloc` library. It does not open files, sockets, or a wall
-clock. Hosts (Weavatrix, RadioChron, later a service wrapper) supply time,
-identity, I/O, and persistence.
+This crate is **not Weavatrix**. It does not parse repositories, speak MCP,
+or compete with Serena, Repomix, or ripgrep. It is a `no_std` + `alloc`
+counter/sketch library. Hosts (Weavatrix, RadioChron, later a service
+wrapper) supply time, identity, I/O, and persistence. The engine must not
+take a runtime dependency that pulls this crate into language adapters.
 
 Two backends share one ingest contract:
 
