@@ -37,6 +37,35 @@ pub fn heuristic_density(matrix: &[u64], width: usize) -> DensityScore {
     }
 }
 
+/// Best 2×2 block density, falling back to the peak cell. Candidate only.
+#[must_use]
+pub fn group_density(matrix: &[u64], width: usize) -> DensityScore {
+    let peak = heuristic_density(matrix, width);
+    if width < 2 {
+        return DensityScore {
+            kind: "group",
+            ..peak
+        };
+    }
+    let mut best = peak.milli;
+    let mut at = (peak.rows, peak.cols);
+    for row in 0..width.saturating_sub(1) {
+        for col in 0..width.saturating_sub(1) {
+            let milli = submatrix_density(matrix, width, &[row, row + 1], &[col, col + 1]);
+            if milli > best {
+                best = milli;
+                at = (row, col);
+            }
+        }
+    }
+    DensityScore {
+        milli: best,
+        kind: "group",
+        rows: at.0,
+        cols: at.1,
+    }
+}
+
 /// Exact density of one supplied submatrix, in thousandths.
 #[must_use]
 pub fn submatrix_density(matrix: &[u64], width: usize, rows: &[usize], cols: &[usize]) -> u64 {
@@ -72,8 +101,10 @@ pub fn anograph_counterexample(width: usize) -> Vec<u64> {
 }
 
 fn density_milli(sum: u64, area: usize) -> u64 {
-    let root = isqrt(u64::try_from(area).unwrap_or(u64::MAX)).max(1);
-    sum.saturating_mul(1000) / root
+    let area = u64::try_from(area).unwrap_or(u64::MAX);
+    let scaled = area.saturating_mul(1_000_000);
+    let root = isqrt(scaled).max(1);
+    sum.saturating_mul(1_000_000) / root
 }
 
 fn isqrt(value: u64) -> u64 {
@@ -91,7 +122,28 @@ fn isqrt(value: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{anograph_counterexample, heuristic_density, submatrix_density};
+    use super::{anograph_counterexample, group_density, heuristic_density, submatrix_density};
+
+    #[test]
+    fn a_dense_block_scores_above_a_diagonal_of_the_same_mass() {
+        let diagonal = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+        let block = [1, 1, 0, 1, 1, 0, 0, 0, 0];
+        assert!(
+            group_density(&block, 3).milli > group_density(&diagonal, 3).milli,
+            "a 2x2 block is denser than a diagonal of ones"
+        );
+    }
+
+    #[test]
+    fn submatrix_density_uses_a_finer_square_root() {
+        let matrix = alloc::vec![1_u64; 63];
+        let cols = (0..63).collect::<alloc::vec::Vec<_>>();
+        let milli = submatrix_density(&matrix, 63, &[0], &cols);
+        assert!(
+            (7_900..=8_000).contains(&milli),
+            "63/sqrt(63) in thousandths is about 7937, got {milli}"
+        );
+    }
 
     #[test]
     fn counterexample_witness_is_stronger_than_a_false_two_approx() {

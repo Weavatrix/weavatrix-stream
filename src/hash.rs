@@ -19,6 +19,19 @@ pub fn mix(seed: u64, bytes: &[u8]) -> u64 {
     hash ^ (hash >> 33)
 }
 
+/// Length-prefixed fields so a NUL inside a label cannot split the tuple.
+#[must_use]
+pub fn encode_fields(parts: &[&str]) -> alloc::vec::Vec<u8> {
+    let mut out = alloc::vec::Vec::new();
+    for part in parts {
+        let bytes = part.as_bytes();
+        let len = u32::try_from(bytes.len()).unwrap_or(u32::MAX);
+        out.extend_from_slice(&len.to_le_bytes());
+        out.extend_from_slice(bytes);
+    }
+    out
+}
+
 #[must_use]
 pub fn bucket(hash: u64, width: usize) -> usize {
     let width = u128::from(u64::try_from(width.max(1)).unwrap_or(1));

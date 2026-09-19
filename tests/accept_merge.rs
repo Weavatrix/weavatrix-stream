@@ -23,17 +23,23 @@ fn checkpoint_replay_neither_loses_nor_duplicates() {
 
 #[test]
 fn old_checkpoint_version_is_rejected() {
+    let budget = Budget::small();
     let mut snap = WindowCheckpoint {
         version: CHECKPOINT_VERSION + 1,
         seed: 0,
         watermark: 0,
         closed: false,
-        width: 64,
-        replicas: 4,
+        width: budget.width,
+        replicas: budget.replicas,
         pairs: Vec::new(),
         keys: Vec::new(),
         witnesses: Vec::new(),
         counters: None,
+        lateness: budget.lateness,
+        max_pairs: budget.max_pairs,
+        max_dedup: budget.max_dedup,
+        max_witnesses: budget.max_witnesses,
+        witnesses_truncated: false,
     };
     assert!(matches!(
         StreamWindow::restore_exact(Budget::small(), snap.clone()),
@@ -125,11 +131,23 @@ fn static_edge_removal_is_not_a_negative_increment() {
 
 #[test]
 fn explanation_does_not_write_graph_edges() {
+    use weavatrix_stream::{Quality, from_witnesses};
     let mut window = StreamWindow::exact(Budget::small()).unwrap();
     let item = event("proj", "a", "b", 10, 1, 1, EventPhase::Request);
     window.ingest(&item).unwrap();
     let snap = window.checkpoint();
+    let candidate = from_witnesses(
+        "proj",
+        "mcp.invocation",
+        None,
+        &snap.witnesses,
+        Quality::default(),
+    );
     assert!(snap.pairs.len() <= 1);
+    assert_eq!(
+        candidate.verification,
+        weavatrix_stream::Verification::NotPerformed
+    );
 }
 
 #[test]

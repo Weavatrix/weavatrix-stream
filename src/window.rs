@@ -4,7 +4,7 @@ use crate::hcms::HcmsWindow;
 use crate::model::{
     EntityId, IngestError, InteractionEvent, RelationProfile, ScopeId, WindowCheckpoint,
 };
-use crate::score::{DensityScore, heuristic_density};
+use crate::score::{DensityScore, group_density, heuristic_density};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendKind {
@@ -53,9 +53,11 @@ impl StreamWindow {
         match self {
             Self::Exact(exact) => exact.ingest(event),
             Self::Hcms { exact, sketch } => {
+                let rollback = exact.clone();
                 let accepted = exact.ingest(event)?;
-                if accepted {
-                    sketch.ingest(event)?;
+                if accepted && let Err(error) = sketch.ingest(event) {
+                    *exact = rollback;
+                    return Err(error);
                 }
                 Ok(accepted)
             }
@@ -100,10 +102,13 @@ impl StreamWindow {
         match self {
             Self::Exact(exact) => exact.checkpoint(),
             Self::Hcms { exact, sketch } => {
+                let watermark = exact.watermark().max(sketch.watermark());
                 let mut snap = exact.checkpoint();
                 let sketch_snap = sketch.checkpoint();
                 snap.seed = sketch_snap.seed;
                 snap.counters = sketch_snap.counters;
+                snap.watermark = watermark;
+                snap.closed = snap.closed || sketch_snap.closed;
                 snap
             }
         }
@@ -134,7 +139,8 @@ impl StreamWindow {
     /// # Errors
     /// Returns [`IngestError::Checkpoint`] when sketches are incompatible.
     pub fn try_merge(&mut self, other: &Self) -> Result<(), IngestError> {
-        match (self, other) {
+        let mut next = self.clone();
+        match (&mut next, other) {
             (
                 Self::Hcms {
                     exact: left_exact,
@@ -146,13 +152,16 @@ impl StreamWindow {
                 },
             ) => {
                 left.try_merge(right)?;
-                for (scope, relation, source, target, count) in right_exact.exported_pairs() {
-                    left_exact.add_restored(scope, relation, source, target, count)?;
-                }
-                Ok(())
+                left_exact.try_merge(right_exact)?;
+                let watermark = left_exact.watermark().max(left.watermark());
+                left_exact.advance_watermark(watermark);
+                left.advance_watermark(watermark);
             }
-            _ => Err(IngestError::Checkpoint("merge-backend")),
+            (Self::Exact(left), Self::Exact(right)) => left.try_merge(right)?,
+            _ => return Err(IngestError::Checkpoint("merge-backend")),
         }
+        *self = next;
+        Ok(())
     }
 
     #[must_use]
@@ -162,6 +171,16 @@ impl StreamWindow {
             Self::Hcms { sketch, .. } => sketch
                 .replica(0)
                 .map(|matrix| heuristic_density(matrix, sketch.width())),
+        }
+    }
+
+    #[must_use]
+    pub fn group_score(&self) -> Option<DensityScore> {
+        match self {
+            Self::Exact(_) => None,
+            Self::Hcms { sketch, .. } => sketch
+                .replica(0)
+                .map(|matrix| group_density(matrix, sketch.width())),
         }
     }
 }

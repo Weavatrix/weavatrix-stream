@@ -59,7 +59,7 @@ impl Default for Quality {
 impl Quality {
     #[must_use]
     pub fn forbids_strong_absence(self) -> bool {
-        self.gaps || self.sampled || self.identity_confidence < 80
+        self.gaps || self.sampled || self.identity_confidence < 80 || self.exposure == 0
     }
 }
 
@@ -87,7 +87,7 @@ pub enum IngestError {
     Checkpoint(&'static str),
 }
 
-pub const CHECKPOINT_VERSION: u16 = 1;
+pub const CHECKPOINT_VERSION: u16 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PairCount {
@@ -110,4 +110,9 @@ pub struct WindowCheckpoint {
     pub keys: alloc::vec::Vec<EventKey>,
     pub witnesses: alloc::vec::Vec<(EntityId, EntityId, String)>,
     pub counters: Option<alloc::vec::Vec<u64>>,
+    pub lateness: u64,
+    pub max_pairs: usize,
+    pub max_dedup: usize,
+    pub max_witnesses: usize,
+    pub witnesses_truncated: bool,
 }

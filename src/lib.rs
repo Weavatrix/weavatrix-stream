@@ -26,7 +26,9 @@ pub use model::{
     CHECKPOINT_VERSION, EntityId, EventKey, EventPhase, IngestError, InteractionEvent, Quality,
     RelationProfile, ScopeId, WindowCheckpoint,
 };
-pub use score::{DensityScore, anograph_counterexample, heuristic_density, submatrix_density};
+pub use score::{
+    DensityScore, anograph_counterexample, group_density, heuristic_density, submatrix_density,
+};
 pub use window::{BackendKind, StreamWindow};
 
 #[cfg(test)]

@@ -1,5 +1,5 @@
 use crate::budget::Budget;
-use crate::hash::{bucket, mix};
+use crate::hash::{bucket, encode_fields, mix};
 use crate::model::{CHECKPOINT_VERSION, IngestError, InteractionEvent, WindowCheckpoint};
 use alloc::vec::Vec;
 
@@ -49,14 +49,36 @@ impl HcmsWindow {
         if event.weight == 0 {
             return Err(IngestError::ZeroWeight);
         }
-        if event.event_time + self.budget.lateness < self.watermark {
+        if event.event_time.saturating_add(self.budget.lateness) < self.watermark {
             return Err(IngestError::Late {
                 event_time: event.event_time,
                 watermark: self.watermark,
             });
         }
-        let source = encode(&event.scope.0, &event.relation.name, &event.source.0);
-        let target = encode(&event.scope.0, &event.relation.name, &event.target.0);
+        let updates = self.planned_increments(event)?;
+        for (index, next) in updates {
+            self.counters[index] = next;
+        }
+        Ok(())
+    }
+
+    fn planned_increments(
+        &self,
+        event: &InteractionEvent,
+    ) -> Result<Vec<(usize, u64)>, IngestError> {
+        let source = encode_fields(&[
+            &event.scope.0,
+            &event.relation.name,
+            &event.relation.weight_unit,
+            &event.source.0,
+        ]);
+        let target = encode_fields(&[
+            &event.scope.0,
+            &event.relation.name,
+            &event.relation.weight_unit,
+            &event.target.0,
+        ]);
+        let mut updates = Vec::with_capacity(self.budget.replicas);
         for replica in 0..self.budget.replicas {
             let replica_seed = u64::try_from(replica).unwrap_or(0);
             let row = bucket(mix(self.seed ^ replica_seed, &source), self.budget.width);
@@ -69,15 +91,17 @@ impl HcmsWindow {
                 .saturating_mul(span)
                 .saturating_add(row.saturating_mul(self.budget.width))
                 .saturating_add(col);
-            let slot = self
+            let current = self
                 .counters
-                .get_mut(index)
+                .get(index)
+                .copied()
                 .ok_or(IngestError::Budget("sketch"))?;
-            *slot = slot
+            let next = current
                 .checked_add(event.weight)
                 .ok_or(IngestError::Overflow)?;
+            updates.push((index, next));
         }
-        Ok(())
+        Ok(updates)
     }
 
     #[must_use]
@@ -112,12 +136,15 @@ impl HcmsWindow {
         {
             return Err(IngestError::Checkpoint("incompatible-merge"));
         }
-        for (slot, extra) in self.counters.iter_mut().zip(other.counters.iter()) {
+        let mut next = self.counters.clone();
+        for (slot, extra) in next.iter_mut().zip(other.counters.iter()) {
             *slot = slot.checked_add(*extra).ok_or(IngestError::Overflow)?;
         }
+        self.counters = next;
         if other.watermark > self.watermark {
             self.watermark = other.watermark;
         }
+        self.closed = self.closed || other.closed;
         Ok(())
     }
 
@@ -134,6 +161,11 @@ impl HcmsWindow {
             keys: Vec::new(),
             witnesses: Vec::new(),
             counters: Some(self.counters.clone()),
+            lateness: self.budget.lateness,
+            max_pairs: self.budget.max_pairs,
+            max_dedup: self.budget.max_dedup,
+            max_witnesses: self.budget.max_witnesses,
+            witnesses_truncated: false,
         }
     }
 
@@ -163,6 +195,13 @@ impl HcmsWindow {
         if counters.len() != expected {
             return Err(IngestError::Checkpoint("counter-shape"));
         }
+        if snapshot.lateness != budget.lateness
+            || snapshot.max_pairs != budget.max_pairs
+            || snapshot.max_dedup != budget.max_dedup
+            || snapshot.max_witnesses != budget.max_witnesses
+        {
+            return Err(IngestError::Checkpoint("policy-mismatch"));
+        }
         let budget = budget
             .validate()
             .map_err(|_| IngestError::Checkpoint("budget"))?;
@@ -174,13 +213,4 @@ impl HcmsWindow {
             counters,
         })
     }
-}
-
-fn encode(scope: &str, relation: &str, entity: &str) -> Vec<u8> {
-    let mut out = Vec::from(scope.as_bytes());
-    out.push(0);
-    out.extend_from_slice(relation.as_bytes());
-    out.push(0);
-    out.extend_from_slice(entity.as_bytes());
-    out
 }

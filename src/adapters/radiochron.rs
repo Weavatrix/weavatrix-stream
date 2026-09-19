@@ -60,7 +60,9 @@ pub fn to_event(observation: &RadioObservation) -> Result<InteractionEvent, Inge
 #[must_use]
 pub fn relation_name(kind: RadioKind) -> &'static str {
     match kind {
-        RadioKind::Association | RadioKind::AuthFailure | RadioKind::Roam => "radio.association",
+        RadioKind::Association => "radio.association",
+        RadioKind::AuthFailure => "radio.auth_failure",
+        RadioKind::Roam => "radio.roam",
         RadioKind::ScanVisibility => "radio.visibility",
     }
 }

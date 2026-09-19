@@ -9,13 +9,14 @@
 graph that already knows the real entities.**
 
 `weavatrix-stream` is a `no_std` + `alloc` crate for typed `source → target`
-windows. `Weavatrix` uses it for MCP/tool activity. `RadioChron` uses it for
-device→AP and sensor→BSSID projections. It is **not** a repository parser,
-**not** an MCP server, and **not** a port of `AnoGraph`.
+windows. It **provides adapters** for Weavatrix observations and RadioChron
+captures. It does not pull those products in, and those hosts do not have to
+depend on this crate to ship. It is **not** a repository parser, **not** an
+MCP server, and **not** a port of `AnoGraph`.
 
 ```toml
 [dependencies]
-weavatrix-stream = "0.1.2"
+weavatrix-stream = "0.1.3"
 ```
 
 ## What you get
@@ -24,7 +25,7 @@ weavatrix-stream = "0.1.2"
 | --- | --- | --- |
 | Exact window | Small projects, tests, replay oracles | A pair you never ingested does not appear |
 | H-CMS sketch | Large streams that cannot store every pair | A bucket is not a tool name or an AP |
-| Checkpoint / merge | Restart, host/embedded replay, compatible panes | A different seed or version is rejected |
+| Checkpoint / merge | Restart, host/embedded replay, disjoint panes | A rejected merge or ingest leaves state unchanged. Overlap is an error. Restore keeps the next late/accept decision |
 | Host adapters | `Weavatrix` observations, `RadioChron` captures | A reported success is not a verified effect. A Wi-Fi scan is `radio.visibility`, not communication |
 
 Scores are heuristic candidates. They do not write canonical graph edges
@@ -43,9 +44,11 @@ does not open files, sockets, or a wall clock.
 - Zero and overflowing weights are rejected.
 - Missing capture coverage forbids a “nothing happened” claim.
 
-Forty acceptance tests live under `tests/accept_*.rs` (identity, time,
-budgets, merge). S6 — a network service wrapper — stays out until a host
-needs shared state.
+Acceptance tests under `tests/accept_*.rs` cover identity, time, budgets,
+merge, and compositional invariants: a rejected operation leaves accepted
+state unchanged; `restore(checkpoint(S))` keeps the next late/accept
+decision; merge of disjoint panes matches a single replay. S6 — a
+network service wrapper — stays out until a host needs shared state.
 
 ## Embed
 

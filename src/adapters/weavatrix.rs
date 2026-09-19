@@ -62,7 +62,7 @@ pub fn to_event(observation: &HostObservation) -> Result<InteractionEvent, Adapt
             phase: observation.phase,
         },
         scope: ScopeId(observation.scope.clone()),
-        relation: relation_for(observation.phase),
+        relation: relation_for(observation),
         source: EntityId(observation.source.clone()),
         target: EntityId(observation.target.clone()),
         event_time: observation.event_time,
@@ -73,10 +73,18 @@ pub fn to_event(observation: &HostObservation) -> Result<InteractionEvent, Adapt
     })
 }
 
-fn relation_for(phase: EventPhase) -> RelationProfile {
-    match phase {
-        EventPhase::Request => RelationProfile::new("mcp.invocation", "count"),
-        EventPhase::ReportedResult => RelationProfile::new("mcp.result", "count"),
-        EventPhase::VerifiedEffect => RelationProfile::new("mcp.effect", "count"),
+fn relation_for(observation: &HostObservation) -> RelationProfile {
+    match (observation.phase, observation.result) {
+        (EventPhase::Request, _) => RelationProfile::new("mcp.invocation", "count"),
+        (EventPhase::ReportedResult, ObservationResult::Success) => {
+            RelationProfile::new("mcp.result.success", "count")
+        }
+        (EventPhase::ReportedResult, ObservationResult::Failure) => {
+            RelationProfile::new("mcp.result.failure", "count")
+        }
+        (EventPhase::ReportedResult, ObservationResult::Reported) => {
+            RelationProfile::new("mcp.result", "count")
+        }
+        (EventPhase::VerifiedEffect, _) => RelationProfile::new("mcp.effect", "count"),
     }
 }
