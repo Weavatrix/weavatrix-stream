@@ -8,8 +8,10 @@
 
 extern crate alloc;
 
+pub mod adapters;
 pub mod budget;
 pub mod exact;
+pub mod explain;
 pub mod hash;
 pub mod hcms;
 pub mod model;
@@ -18,12 +20,13 @@ pub mod window;
 
 pub use budget::{Budget, BudgetError};
 pub use exact::ExactWindow;
+pub use explain::{Candidate, Verification, from_witnesses};
 pub use hcms::HcmsWindow;
 pub use model::{
-    EntityId, EventKey, EventPhase, IngestError, InteractionEvent, Quality, RelationProfile,
-    ScopeId,
+    CHECKPOINT_VERSION, EntityId, EventKey, EventPhase, IngestError, InteractionEvent, Quality,
+    RelationProfile, ScopeId, WindowCheckpoint,
 };
-pub use score::{DensityScore, heuristic_density};
+pub use score::{DensityScore, anograph_counterexample, heuristic_density, submatrix_density};
 pub use window::{BackendKind, StreamWindow};
 
 #[cfg(test)]

@@ -41,6 +41,8 @@ impl RelationProfile {
 pub struct Quality {
     pub sampled: bool,
     pub identity_confidence: u8,
+    pub gaps: bool,
+    pub exposure: u8,
 }
 
 impl Default for Quality {
@@ -48,7 +50,16 @@ impl Default for Quality {
         Self {
             sampled: false,
             identity_confidence: 100,
+            gaps: false,
+            exposure: 100,
         }
+    }
+}
+
+impl Quality {
+    #[must_use]
+    pub fn forbids_strong_absence(self) -> bool {
+        self.gaps || self.sampled || self.identity_confidence < 80
     }
 }
 
@@ -73,4 +84,30 @@ pub enum IngestError {
     Late { event_time: u64, watermark: u64 },
     Budget(&'static str),
     ClosedWindow,
+    Checkpoint(&'static str),
+}
+
+pub const CHECKPOINT_VERSION: u16 = 1;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PairCount {
+    pub scope: ScopeId,
+    pub relation: RelationProfile,
+    pub source: EntityId,
+    pub target: EntityId,
+    pub count: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowCheckpoint {
+    pub version: u16,
+    pub seed: u64,
+    pub watermark: u64,
+    pub closed: bool,
+    pub width: usize,
+    pub replicas: usize,
+    pub pairs: alloc::vec::Vec<PairCount>,
+    pub keys: alloc::vec::Vec<EventKey>,
+    pub witnesses: alloc::vec::Vec<(EntityId, EntityId, String)>,
+    pub counters: Option<alloc::vec::Vec<u64>>,
 }

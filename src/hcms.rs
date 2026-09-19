@@ -1,6 +1,6 @@
 use crate::budget::Budget;
 use crate::hash::{bucket, mix};
-use crate::model::{IngestError, InteractionEvent};
+use crate::model::{CHECKPOINT_VERSION, IngestError, InteractionEvent, WindowCheckpoint};
 use alloc::vec::Vec;
 
 #[derive(Debug, Clone)]
@@ -90,6 +90,89 @@ impl HcmsWindow {
     #[must_use]
     pub fn width(&self) -> usize {
         self.budget.width
+    }
+
+    #[must_use]
+    pub fn seed(&self) -> u64 {
+        self.seed
+    }
+
+    #[must_use]
+    pub fn watermark(&self) -> u64 {
+        self.watermark
+    }
+
+    /// # Errors
+    /// Returns [`IngestError::Checkpoint`] when dimensions or seed disagree.
+    pub fn try_merge(&mut self, other: &Self) -> Result<(), IngestError> {
+        if self.seed != other.seed
+            || self.budget.width != other.budget.width
+            || self.budget.replicas != other.budget.replicas
+            || self.counters.len() != other.counters.len()
+        {
+            return Err(IngestError::Checkpoint("incompatible-merge"));
+        }
+        for (slot, extra) in self.counters.iter_mut().zip(other.counters.iter()) {
+            *slot = slot.checked_add(*extra).ok_or(IngestError::Overflow)?;
+        }
+        if other.watermark > self.watermark {
+            self.watermark = other.watermark;
+        }
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn checkpoint(&self) -> WindowCheckpoint {
+        WindowCheckpoint {
+            version: CHECKPOINT_VERSION,
+            seed: self.seed,
+            watermark: self.watermark,
+            closed: self.closed,
+            width: self.budget.width,
+            replicas: self.budget.replicas,
+            pairs: Vec::new(),
+            keys: Vec::new(),
+            witnesses: Vec::new(),
+            counters: Some(self.counters.clone()),
+        }
+    }
+
+    /// # Errors
+    /// Returns [`IngestError::Checkpoint`] when the snapshot does not match this sketch.
+    pub fn restore(
+        budget: Budget,
+        seed: u64,
+        snapshot: WindowCheckpoint,
+    ) -> Result<Self, IngestError> {
+        if snapshot.version != CHECKPOINT_VERSION {
+            return Err(IngestError::Checkpoint("version"));
+        }
+        if snapshot.seed != seed
+            || snapshot.width != budget.width
+            || snapshot.replicas != budget.replicas
+        {
+            return Err(IngestError::Checkpoint("incompatible-restore"));
+        }
+        let counters = snapshot
+            .counters
+            .ok_or(IngestError::Checkpoint("missing-counters"))?;
+        let expected = budget
+            .replicas
+            .saturating_mul(budget.width)
+            .saturating_mul(budget.width);
+        if counters.len() != expected {
+            return Err(IngestError::Checkpoint("counter-shape"));
+        }
+        let budget = budget
+            .validate()
+            .map_err(|_| IngestError::Checkpoint("budget"))?;
+        Ok(Self {
+            budget,
+            watermark: snapshot.watermark,
+            closed: snapshot.closed,
+            seed,
+            counters,
+        })
     }
 }
 

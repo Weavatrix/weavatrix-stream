@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.2 - 2026-09-19
+
+- Checkpoint/replay and compatible H-CMS pane merge.
+- Typed Weavatrix and RadioChron adapters; scan visibility is not communication.
+- Candidate explanations stay unverified and are never security findings.
+- Forty acceptance tests for identity, time, budgets, and merge.
+
 ## 0.1.1 - 2026-09-17
 
 - README states this crate is not a repository engine, MCP host, or

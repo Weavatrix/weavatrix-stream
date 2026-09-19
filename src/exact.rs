@@ -1,5 +1,8 @@
 use crate::budget::Budget;
-use crate::model::{EntityId, EventKey, IngestError, InteractionEvent, RelationProfile, ScopeId};
+use crate::model::{
+    CHECKPOINT_VERSION, EntityId, EventKey, IngestError, InteractionEvent, PairCount,
+    RelationProfile, ScopeId, WindowCheckpoint,
+};
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
 
@@ -107,7 +110,110 @@ impl ExactWindow {
     }
 
     #[must_use]
+    pub fn exported_pairs(&self) -> Vec<(ScopeId, RelationProfile, EntityId, EntityId, u64)> {
+        self.counts
+            .iter()
+            .map(|(key, count)| {
+                (
+                    key.0.clone(),
+                    key.1.clone(),
+                    key.2.clone(),
+                    key.3.clone(),
+                    *count,
+                )
+            })
+            .collect()
+    }
+
+    /// # Errors
+    /// Returns [`IngestError`] when the restored pair overflows the budget.
+    pub fn add_restored(
+        &mut self,
+        scope: ScopeId,
+        relation: RelationProfile,
+        source: EntityId,
+        target: EntityId,
+        count: u64,
+    ) -> Result<(), IngestError> {
+        let key = (scope, relation, source, target);
+        if !self.counts.contains_key(&key) && self.counts.len() >= self.budget.max_pairs {
+            return Err(IngestError::Budget("pairs"));
+        }
+        let slot = self.counts.entry(key).or_insert(0);
+        *slot = slot.checked_add(count).ok_or(IngestError::Overflow)?;
+        Ok(())
+    }
+
+    #[must_use]
     pub fn witnesses(&self) -> &[(EntityId, EntityId, alloc::string::String)] {
         &self.witnesses
+    }
+
+    #[must_use]
+    pub fn watermark(&self) -> u64 {
+        self.watermark
+    }
+
+    #[must_use]
+    pub fn is_closed(&self) -> bool {
+        self.closed
+    }
+
+    #[must_use]
+    pub fn checkpoint(&self) -> WindowCheckpoint {
+        WindowCheckpoint {
+            version: CHECKPOINT_VERSION,
+            seed: 0,
+            watermark: self.watermark,
+            closed: self.closed,
+            width: self.budget.width,
+            replicas: self.budget.replicas,
+            pairs: self
+                .counts
+                .iter()
+                .map(|(key, count)| PairCount {
+                    scope: key.0.clone(),
+                    relation: key.1.clone(),
+                    source: key.2.clone(),
+                    target: key.3.clone(),
+                    count: *count,
+                })
+                .collect(),
+            keys: self.dedup.iter().cloned().collect(),
+            witnesses: self.witnesses.clone(),
+            counters: None,
+        }
+    }
+
+    /// # Errors
+    /// Returns [`IngestError::Checkpoint`] when the snapshot version or budget is wrong.
+    pub fn restore(budget: Budget, snapshot: WindowCheckpoint) -> Result<Self, IngestError> {
+        if snapshot.version != CHECKPOINT_VERSION {
+            return Err(IngestError::Checkpoint("version"));
+        }
+        if snapshot.counters.is_some() {
+            return Err(IngestError::Checkpoint("exact-cannot-hold-sketch"));
+        }
+        let budget = budget
+            .validate()
+            .map_err(|_| IngestError::Checkpoint("budget"))?;
+        if snapshot.pairs.len() > budget.max_pairs || snapshot.keys.len() > budget.max_dedup {
+            return Err(IngestError::Budget("checkpoint"));
+        }
+        let mut counts = BTreeMap::new();
+        for pair in snapshot.pairs {
+            counts.insert(
+                (pair.scope, pair.relation, pair.source, pair.target),
+                pair.count,
+            );
+        }
+        Ok(Self {
+            budget,
+            watermark: snapshot.watermark,
+            closed: snapshot.closed,
+            counts,
+            dedup: snapshot.keys.into_iter().collect(),
+            witnesses: snapshot.witnesses,
+        })
     }
 }
